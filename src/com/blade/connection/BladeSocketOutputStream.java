@@ -9,7 +9,7 @@ import java.io.OutputStream;
  * @date: 2017年5月24日
  * @version 1.0
  */
-public class BladeSocketOutputStream extends BufferedOutputStream {
+public final class BladeSocketOutputStream extends BufferedOutputStream {
 
   public BladeSocketOutputStream(OutputStream out) {
     super(out);
