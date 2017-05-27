@@ -10,7 +10,7 @@ import java.io.InputStream;
  * @date: 2017年5月6日
  * @version 1.0
  */
-public final class BladeSocketInputStream extends BufferedInputStream {
+final class BladeSocketInputStream extends BufferedInputStream {
 
   public BladeSocketInputStream(InputStream in) {
     super(in);
