@@ -62,11 +62,15 @@ public final class BladeConnection {
     return false;
   }
 
-  public void stopConnect() {
+  public void closeConnect() {
     if (isConnected()) {
       releaseSystemResource();
       setConnectionStatus(BladeConnectionStatus.DIS_CONNECTED);
     }
+  }
+  
+  public void stopConnect() {
+    closeConnect();
     //TODO:停止工作线程或心跳线程
     sbt.release();
   }
@@ -79,7 +83,7 @@ public final class BladeConnection {
     return connStatus;
   }
 
-  private boolean doReconnect() {
+  public boolean doReconnect() {
     if (isConnected()) {
       return true;
     }
