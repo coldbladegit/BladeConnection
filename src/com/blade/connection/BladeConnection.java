@@ -7,8 +7,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
- * 与指定服务器进行连接,{@code reconnCount}表示当连接断开后将去自动尝试重连的最大次数
- * 默认连接超时值{@code DEFAULT_TIMEOUT DEFAULT_TIMEUNIT}为30秒
+ * 与指定服务器进行连接,默认连接超时值{@code DEFAULT_TIMEOUT DEFAULT_TIMEUNIT}为30秒
+ * 该连接拥有一个对外广播当前的状态的线程,如果对连接当前所处的状态非常关心,需要调用{@code addStatusListener}
+ * 接口进行注册
  * @author cold_blade
  * @date 2017年5月26日
  * @version 1.0
@@ -18,88 +19,48 @@ public final class BladeConnection {
   private final static long DEFAULT_TIMEOUT = 30;
   private final static TimeUnit DEFAULT_TIMEUNIT = TimeUnit.SECONDS;
   private final ReentrantReadWriteLock statusLock = new ReentrantReadWriteLock();
-  private Socket socket;
+  private Socket socket = new Socket();
   private BladeSocketAddress sockAddr;
   private long timeOut;
   private TimeUnit timeUnit;
-  private int reconnCount;
   private BladeConnectionStatus status = BladeConnectionStatus.DIS_CONNECTED;
   private BladeSocketInputStream bsis;
   private BladeSocketOutputStream bsos;
   private StatusBroadcastThread sbt;
 
-  public BladeConnection(BladeSocketAddress sockAddr, int reconnCount) {
-    this(sockAddr, reconnCount, DEFAULT_TIMEOUT);
+  public BladeConnection(BladeSocketAddress sockAddr) {
+    this(sockAddr, DEFAULT_TIMEOUT);
   }
 
-  public BladeConnection(BladeSocketAddress sockAddr, int reconnCount, long timeOut) {
-    this(sockAddr, reconnCount, timeOut, DEFAULT_TIMEUNIT);
+  public BladeConnection(BladeSocketAddress sockAddr, long timeOut) {
+    this(sockAddr, timeOut, DEFAULT_TIMEUNIT);
   }
 
-  public BladeConnection(BladeSocketAddress sockAddr, int reconnCount, long timeOut,
-      TimeUnit timeUnit) {
+  public BladeConnection(BladeSocketAddress sockAddr, long timeOut, TimeUnit timeUnit) {
     if (null == sockAddr) {
       throw new IllegalArgumentException("sockAddr is null");
     }
     this.sockAddr = sockAddr;
-    this.reconnCount = reconnCount;
     this.timeOut = timeOut;
     this.timeUnit = timeUnit;
     this.sbt = new StatusBroadcastThread();
+    this.sbt.start();
   }
 
+  /**
+   * 添加连接状态改变的事件监听
+   * @param listener
+   */
   public void addStatusListener(BladeSocketStatusListener listener) {
     sbt.register(listener);
   }
-  
-  public boolean startConnect() {
+
+  /**
+   * 建立与服务的连接
+   * @return true 成功建立连接,否则false
+   */
+  public boolean doConnect() {
     setConnectionStatus(BladeConnectionStatus.START_CONNECT);
-    if (doConnect()) {
-      //TODO:开启工作线程或心跳线程
-      sbt.start();
-      return true;
-    }
-    return false;
-  }
-
-  public void closeConnect() {
-    if (isConnected()) {
-      releaseSystemResource();
-      setConnectionStatus(BladeConnectionStatus.DIS_CONNECTED);
-    }
-  }
-  
-  public void stopConnect() {
-    closeConnect();
-    //TODO:停止工作线程或心跳线程
-    sbt.release();
-  }
-
-  public BladeConnectionStatus getConnectionStatus() {
-    BladeConnectionStatus connStatus;
-    statusLock.readLock().lock();
-    connStatus = status;
-    statusLock.readLock().unlock();
-    return connStatus;
-  }
-
-  public boolean doReconnect() {
-    if (isConnected()) {
-      return true;
-    }
-    int count = reconnCount;
-    setConnectionStatus(BladeConnectionStatus.RECONNECTING);
-    while (count > 0) {
-      if (doConnect()) {
-        break;
-      }
-      --count;
-    }
-    return isConnected();
-  }
-  
-  private boolean doConnect() {
-    socket = new Socket();
     try {
       socket.connect(new InetSocketAddress(sockAddr.getAddress(), sockAddr.getPort()),
           (int) timeUnit.toMillis(timeOut));
@@ -113,7 +74,65 @@ public final class BladeConnection {
     }
     return true;
   }
-  
+
+  /**
+   * 从socket流的缓冲区中读取一个{@code BladeSocketSerializable}对象
+   * @param obj
+   * @return 返回具体读取的长度
+   * @throws IOException
+   * @throws IllegalStateException 未建立连接
+   */
+  public long readObject(BladeSocketSerializable obj) throws IOException, IllegalStateException {
+    if (!isConnected()) {
+      throw new IllegalStateException("还未建立连接");
+    }
+    return obj.readObject(bsis);
+  }
+
+  /**
+   * 将一个{@code BladeSocketSerializable}对象写入socket流的缓冲区中
+   * @param obj
+   * @return 返回具体写入的长度
+   * @throws IOException
+   * @throws IllegalStateException 未建立连接
+   */
+  public long writeObject(BladeSocketSerializable obj) throws IOException, IllegalStateException {
+    if (!isConnected()) {
+      throw new IllegalStateException("还未建立连接");
+    }
+    return obj.writeObject(bsos);
+  }
+
+  /**
+   * 断开与服务的连接,并释放系统的IO资源
+   */
+  public void closeConnect() {
+    if (isConnected()) {
+      releaseSystemResource();
+      setConnectionStatus(BladeConnectionStatus.DIS_CONNECTED);
+    }
+  }
+
+  /**
+   * 销毁该连接,释放系统的IO资源的同时结束状态广播的线程
+   */
+  public void destroyConnect() {
+    closeConnect();
+    sbt.release();
+  }
+
+  /**
+   * 获取当前连接所处的状态
+   * @return {@code BladeConnectionStatus}
+   */
+  public BladeConnectionStatus getConnectionStatus() {
+    BladeConnectionStatus connStatus;
+    statusLock.readLock().lock();
+    connStatus = status;
+    statusLock.readLock().unlock();
+    return connStatus;
+  }
+
   private void setConnectionStatus(BladeConnectionStatus status) {
     statusLock.writeLock().lock();
     this.status = status;
@@ -151,8 +170,6 @@ public final class BladeConnection {
         socket.close();
       }
     } catch (IOException e) {
-    } finally {
-      socket = null;
     }
   }
 }
